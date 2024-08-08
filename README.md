@@ -17,7 +17,7 @@ This repository provides:
 
   Toolkit for processing MuJoCo xml file. See `xml_processing/write_obj_xml.py`.
   Differentiable Grasp optimizer based on Pytorch. See `graspsyn/hand_optimizer.py`. 
-  Toolkit for differentiable Hand Kinematics Layer. See Leap_hand_layer (https://github.com/v-wewei/leap_hand_layer).
+  Toolkit for Differentiable Hand Kinematics Layer (multi-fingered hand). See leap_hand_layer (https://github.com/v-wewei/leap_hand_layer).
   - The gradient-based hand grasp optimizer is implemented with AdamW optimizer with following objectives.
     - Collision Avoidance. Hand-Object Collision and Self Collision based on point to point singed distance. 
     - Contact Encourage. Hand(Anchor)-object distance.  
@@ -77,4 +77,5 @@ Email address: Wei Wei <weiwei72607260@gmail.com>.
 
 ## Acknowledge
 
-The authors express sincere gratitude for the contribution and help of Sizhe Wang <sizhe_wang@163.com>.
+*The author would thank DexGraspNet(https://github.com/PKU-EPIC/DexGraspNet) for partial code implementation. 
+*The authors express sincere gratitude for the contribution and help of Sizhe Wang <sizhe_wang@163.com>.
