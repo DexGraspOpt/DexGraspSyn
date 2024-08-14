@@ -17,7 +17,8 @@ if __name__ == "__main__":
     CUR_DIR = os.path.dirname(os.path.abspath(__file__))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # parameters adopt from DexGraspNet  (https://github.com/PKU-EPIC/DexGraspNet.git)
+    hand_name = 'svh_hand'
+
     opt_args = edict({'batch_size_each': 10, 'distance_lower': 0.05, 'distance_upper': 0.1,
                       'jitter_strength': 0.1, "theta_lower": -np.pi / 6, 'theta_upper': np.pi / 6})
 
@@ -29,7 +30,7 @@ if __name__ == "__main__":
         object_params = get_object_params(obj_filepath)
         obj_name = obj_filepath.split('/')[-1].split('.')[0]
 
-        hand_opt = HandOptimizer(device=device, hand_name='leap_hand', hand_params={}, object_params=object_params,
+        hand_opt = HandOptimizer(device=device, hand_name=hand_name, hand_params={}, object_params=object_params,
                                  apply_fc=False, args=opt_args)
         hand_opt.optimize(obstacle=None, n_iters=200)
 
@@ -41,7 +42,7 @@ if __name__ == "__main__":
         if vis_grasp:
             # init grasp
             pose = torch.eye(4).reshape(1, 4, 4).repeat(opt_args.batch_size_each, 1, 1).to(device).float()
-            theta = hand_opt.init_joint_angles.reshape(-1, 16)
+            theta = hand_opt.init_joint_angles.reshape(-1, hand_opt.hand_layer.n_dofs)
             if hand_opt.use_quat:
                 pose[:, :3, :3] = roma.unitquat_to_rotmat(hand_opt.init_wrist_rot)
             else:  # use rot6d representation
@@ -51,7 +52,7 @@ if __name__ == "__main__":
 
             # show grasp and hand anchors
             pose = torch.eye(4).reshape(1, 4, 4).repeat(opt_args.batch_size_each, 1, 1).to(device).float()
-            theta = torch.from_numpy(grasp['joint_angles']).to(device).reshape(-1, 16)
+            theta = torch.from_numpy(grasp['joint_angles']).to(device).reshape(-1, hand_opt.hand_layer.n_dofs)
             pose[:, :3, :3] = roma.unitquat_to_rotmat(torch.from_numpy(grasp['wrist_quat'][:, [1, 2, 3, 0]]).to(device))
             pose[:, :3, 3] = torch.from_numpy(grasp['wrist_tsl']).to(device)
             verts, verts_normal = hand_opt.hand_layer.get_forward_vertices(pose, theta)

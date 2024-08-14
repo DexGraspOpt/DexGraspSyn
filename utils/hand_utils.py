@@ -13,6 +13,35 @@ import torch
 import roma
 
 
+def set_init_joint_mu(hand_model):
+    if hand_model.name == 'leap_hand':
+        joint_angles_mu = (hand_model.joints_upper - hand_model.joints_lower) / 6.0 + hand_model.joints_lower
+        joint_angles_mu[1] = -0.1
+        joint_angles_mu[5] = 0.0
+        joint_angles_mu[9] = 0.1
+        joint_angles_mu[12] = 0.8
+    elif hand_model.name == 'allegro_hand':
+        joint_angles_mu = (hand_model.joints_upper - hand_model.joints_lower) / 6.0 + hand_model.joints_lower
+        joint_angles_mu[0] = 0.1
+        joint_angles_mu[4] = 0.0
+        joint_angles_mu[8] = -0.1
+        joint_angles_mu[12] = 0.8
+    elif hand_model.name == 'shadow_hand':
+        joint_angles_mu = torch.tensor([-0.15, 0, 0.6, 0, 0, 0, 0.6, 0, -0.15, 0, 0.6, 0, 0, -0.25, 0, 0.6, 0,
+                                        0, 1.2, 0, 0.0, 0], dtype=torch.float, device=hand_model.device)
+    elif hand_model.name == 'svh_hand':
+        joint_angles_mu = torch.tensor([0.4, 0.0,  # thumb
+                                            0.15, # ring
+                                            0.5,  # spread
+                                            0.15,  # little
+                                            0.0, 0.15,  # index
+                                            0.0, 0.15,  # middle
+                                            ], dtype=torch.float, device=hand_model.device)
+    else:
+        raise NotImplementedError
+    return joint_angles_mu
+
+
 def get_leap_hand_mesh(joint_angles):
     robot = URDF.load('/home/v-wewei/repository/dex-retargeting/assets/robots/hands/leap_hand/leap_hand_right.urdf')
 

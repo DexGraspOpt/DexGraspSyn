@@ -3,6 +3,7 @@ modified from: DexGraspNet  https://github.com/PKU-EPIC/DexGraspNet/blob/main/gr
 Origin Author: Jialiang Zhang, Ruicheng Wang
 Description: initializations
 """
+import os
 
 import torch
 import roma
@@ -18,8 +19,12 @@ import numpy as np
 from meshlib import mrmeshpy
 from meshlib import mrmeshnumpy as mrn
 
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from hand_utils import set_init_joint_mu
 
-def initialize_grasp_space(hand_model, object_mesh_list, args):
+
+def initialize_grasp_space(hand_model, object_mesh_list, args,):
     """
     Initialize grasp translation, rotation, joint angles, and contact point indices
 
@@ -133,11 +138,8 @@ def initialize_grasp_space(hand_model, object_mesh_list, args):
     # joint_angles_mu = torch.tensor(
     #     [0.1, 0, 0.6, 0, 0, 0, 0.6, 0, -0.1, 0, 0.6, 0, 0, -0.2, 0, 0.6, 0, 0, 1.2, 0, -0.2, 0], dtype=torch.float,
     #     device=device)
-    joint_angles_mu = (hand_model.joints_upper - hand_model.joints_lower) / 6.0 + hand_model.joints_lower
-    joint_angles_mu[1] = -0.1
-    joint_angles_mu[5] = 0.0
-    joint_angles_mu[9] = 0.1
-    joint_angles_mu[12] = 0.8
+    joint_angles_mu = set_init_joint_mu(hand_model)
+
     joint_angles_sigma = args.jitter_strength * (hand_model.joints_upper - hand_model.joints_lower)
     joint_angles = torch.zeros([total_batch_size, hand_model.n_dofs], dtype=torch.float, device=device)
     for i in range(hand_model.n_dofs):

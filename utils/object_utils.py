@@ -2,6 +2,7 @@ import trimesh
 import numpy as np
 import point_cloud_utils as pcu
 from mesh_to_sdf import get_surface_point_cloud
+from scipy.spatial import KDTree
 
 
 def get_stable_pose(mesh):
@@ -56,13 +57,16 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
     sizeof_voxel = vox_size
     # Downsample a point cloud on a voxel grid so there is at most one point per voxel.
     # Any arguments after the points are treated as attribute arrays and get averaged within each voxel
-    v_sampled, n_sampled = pcu.downsample_point_cloud_on_voxel_grid(sizeof_voxel, v, n)
-    v_sampled, n_sampled = pcu.downsample_point_cloud_on_voxel_grid(sizeof_voxel, v_sampled, n_sampled)
+    v_sampled = pcu.downsample_point_cloud_on_voxel_grid(sizeof_voxel, v)
+    v_sampled = pcu.downsample_point_cloud_on_voxel_grid(sizeof_voxel, v_sampled)
+
+    kdtree = KDTree(data=v)
+    dist, index = kdtree.query(v_sampled, k=1)
+    v_sampled = v[index]
+    n_sampled = n[index]
 
     if vis:
-        print(
-            'points shape is :', v.shape
-        )
+        print('points shape is :', v_sampled.shape)
         import open3d as o3d
         o3d_pc = o3d.geometry.PointCloud()
         o3d_pc.points = o3d.utility.Vector3dVector(v_sampled)
@@ -71,7 +75,6 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
         o3d_mesh.compute_vertex_normals()
         o3d.visualization.draw_geometries([o3d_pc, o3d_mesh])
 
-    n_sampled /= np.linalg.norm(n_sampled, axis=1)[:, np.newaxis]
     object_params = {'points': v_sampled,
                      'normals': n_sampled,
                      'filepath': mesh_filepath,
