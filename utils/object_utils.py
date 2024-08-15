@@ -28,6 +28,7 @@ def get_stable_pose(mesh):
 
 def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, watertight_process=True, **kwargs):
     mesh = trimesh.load(mesh_filepath, force='mesh', process=False, skip_material=True)
+
     # scale the object mesh
     mesh.vertices *= scale
     if watertight_process:

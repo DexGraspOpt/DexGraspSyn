@@ -18,7 +18,6 @@ from hand_layers.svh_hand_layer.svh_layer import SvhHandLayer, SvhAnchor
 
 from utils.initializations import initialize_grasp_space
 from utils.loss_utils import point2point_signed
-from utils.object_utils import get_object_params
 from utils.rot6d import robust_compute_rotation_matrix_from_ortho6d
 # roma quat [x, y, z, w]
 
@@ -431,11 +430,6 @@ class HandOptimizer(nn.Module):
             hand_rot_loss = roma.rotmat_geodesic_distance(pose[:, :3, :3], self.pose[:, :3, :3]) * 0.2
 
         # abnormal joint angle loss  (hand specific loss)
-        # angle_1 = -torch.clamp(theta[:, 5] - theta[:, 1], -1, 0) * 10
-        # angle_2 = -torch.clamp(theta[:, 9] - theta[:, 5], -1, 0) * 10
-        # angle_3 = torch.abs(theta[:, [2, 3,  6, 7,  10, 11]] - self.joints_mean[[2, 3,  6, 7,  10, 11]].unsqueeze(0)).sum(dim=-1) * 2
-
-
         angle_loss = self.hand_layer.compute_abnormal_joint_loss(theta)
 
         if self.parallel_contact_points is not None:

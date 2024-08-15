@@ -19,9 +19,8 @@ import numpy as np
 from meshlib import mrmeshpy
 from meshlib import mrmeshnumpy as mrn
 
-import sys
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from hand_utils import set_init_joint_mu
+# import sys
+# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
 def initialize_grasp_space(hand_model, object_mesh_list, args,):
@@ -134,11 +133,8 @@ def initialize_grasp_space(hand_model, object_mesh_list, args,):
     # initialize joint angles
     # joint_angles_mu: hand-crafted canonicalized hand articulation
     # use truncated normal distribution to jitter the joint angles
-
-    # joint_angles_mu = torch.tensor(
-    #     [0.1, 0, 0.6, 0, 0, 0, 0.6, 0, -0.1, 0, 0.6, 0, 0, -0.2, 0, 0.6, 0, 0, 1.2, 0, -0.2, 0], dtype=torch.float,
-    #     device=device)
-    joint_angles_mu = set_init_joint_mu(hand_model)
+    # joint_angles_mu = set_init_joint_mu(hand_model)
+    joint_angles_mu = hand_model.get_init_angle()
 
     joint_angles_sigma = args.jitter_strength * (hand_model.joints_upper - hand_model.joints_lower)
     joint_angles = torch.zeros([total_batch_size, hand_model.n_dofs], dtype=torch.float, device=device)

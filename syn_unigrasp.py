@@ -17,7 +17,7 @@ if __name__ == "__main__":
     CUR_DIR = os.path.dirname(os.path.abspath(__file__))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    hand_name = 'svh_hand'
+    hand_name = 'shadow_hand'
 
     opt_args = edict({'batch_size_each': 10, 'distance_lower': 0.05, 'distance_upper': 0.1,
                       'jitter_strength': 0.1, "theta_lower": -np.pi / 6, 'theta_upper': np.pi / 6})
