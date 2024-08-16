@@ -31,12 +31,13 @@ This repository provides:
 ```bash
 conda create -n diffgraspsyn python=3.9
 conda activate diffgraspsyn
+pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 pip install -r requirements.txt
 
 
 cd hand_layers/
-git clone https://github.com/v-wewei/leap_hand_layer
+git clone https://github.com/DexGraspOpt/leap_hand_layer
 
 cd ..
 # for quick example using our test data
