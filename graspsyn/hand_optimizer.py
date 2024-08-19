@@ -15,6 +15,7 @@ from hand_layers.leap_hand_layer.leap_layer import LeapHandLayer, LeapAnchor
 from hand_layers.allegro_hand_layer.allegro_layer import AllegroHandLayer, AllegroAnchor
 from hand_layers.shadow_hand_layer.shadow_layer import ShadowHandLayer, ShadowAnchor
 from hand_layers.svh_hand_layer.svh_layer import SvhHandLayer, SvhAnchor
+from hand_layers.mano_hand_layer.mano_layer import ManoHandLayer, ManoAnchor
 
 from utils.initializations import initialize_grasp_space
 from utils.loss_utils import point2point_signed
@@ -79,6 +80,9 @@ class HandOptimizer(nn.Module):
         elif self.hand_name == 'svh_hand':
             self.hand_layer = SvhHandLayer(to_mano_frame=to_mano_frame, device=self.device)
             self.hand_anchor_layer = SvhAnchor()
+        elif self.hand_name == 'mano_hand':
+            self.hand_layer = ManoHandLayer(to_mano_frame=to_mano_frame, device=self.device)
+            self.hand_anchor_layer = ManoAnchor()
         else:
             # custom hand layer should be added here
             assert NotImplementedError
@@ -90,30 +94,40 @@ class HandOptimizer(nn.Module):
 
             self.finger_num = 4
 
-            finger_indices = self.hand_layer.hand_finger_indices
-            self.finger_indices = []
-            for key, value in finger_indices.items():
-                self.finger_indices.append(value[1].item())
+            self.finger_indices = self.hand_layer.hand_finger_indices
+            # self.finger_indices = []
+            # for key, value in finger_indices.items():
+            #     self.finger_indices.append(value[1].item())
         elif self.hand_name == 'allegro_hand':
             self.joints_mean = self.hand_layer.joints_mean
             self.joints_range = self.hand_layer.joints_range
 
             self.finger_num = 4
 
-            finger_indices = self.hand_layer.hand_finger_indices
-            self.finger_indices = []
-            for key, value in finger_indices.items():
-                self.finger_indices.append(value[1].item())
+            self.finger_indices = self.hand_layer.hand_finger_indices
+            # self.finger_indices = []
+            # for key, value in finger_indices.items():
+            #     self.finger_indices.append(value[1].item())
         elif self.hand_name == 'shadow_hand' or self.hand_name == 'svh_hand':
             self.joints_mean = self.hand_layer.joints_mean
             self.joints_range = self.hand_layer.joints_range
 
             self.finger_num = 5
 
-            finger_indices = self.hand_layer.hand_finger_indices
-            self.finger_indices = []
-            for key, value in finger_indices.items():
-                self.finger_indices.append(value[1])
+            self.finger_indices = self.hand_layer.hand_finger_indices
+            # self.finger_indices = []
+            # for key, value in finger_indices.items():
+            #     self.finger_indices.append(value[1])
+        elif self.hand_name == 'mano_hand':
+            self.joints_mean = self.hand_layer.joints_mean
+            self.joints_range = self.hand_layer.joints_range
+
+            self.finger_num = 5
+
+            self.finger_indices = self.hand_layer.hand_finger_indices
+            # self.finger_indices = []
+            # for key, value in finger_indices.items():
+            #     self.finger_indices.append(value[1])
         else:
             # custom hand layer should be specified here
             raise NotImplementedError
@@ -189,7 +203,7 @@ class HandOptimizer(nn.Module):
                 True, False, True, False,  # Ring   Side
                 False, False  # little
             ])
-        elif self.hand_name == 'shadow_hand' or self.hand_name == 'svh_hand':
+        elif self.hand_name == 'shadow_hand' or self.hand_name == 'svh_hand' or self.hand_name == 'mano_hand':
             valid_mask = torch.tensor([
                 True, True, True, True, True,  # Thumb
                 True, True,  # [Palm]
@@ -225,7 +239,7 @@ class HandOptimizer(nn.Module):
         ], dtype=torch.long).to(self.device)[valid_mask]
 
         self.contact_weight = torch.tensor([
-            0.5, 0.5, 1, 0.5, 0.5,  # Thumb
+            0.5, 1, 1, 0.5, 0.5,  # Thumb
             1.0, 1.0,  # [Palm]
             0.5, 0.5, 0.5, 0.5, 0.5,  # Index
             1.0,  # [Palm]
@@ -260,10 +274,9 @@ class HandOptimizer(nn.Module):
         count = 0
 
         split_indices.append(count)
-        for i in range(len(self.finger_indices)):
-            start = 0 if i == 0 else self.finger_indices[i-1]
-            finger_verts.append(pred['vertices'][:, start:self.finger_indices[i]][:, ::down_sample_rate])
-            finger_verts_normal.append(pred['normals'][:, start:self.finger_indices[i]][:, ::down_sample_rate])
+        for key, value in self.finger_indices.items():
+            finger_verts.append(pred['vertices'][:, value][:, ::down_sample_rate])
+            finger_verts_normal.append(pred['normals'][:, value][:, ::down_sample_rate])
             count += finger_verts[-1].shape[1]
             split_indices.append(count)
 
