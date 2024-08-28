@@ -29,9 +29,9 @@ This repository provides:
 ## Quick Example
 
 ```bash
-conda create -n diffgraspsyn python=3.9
+conda create -n diffgraspsyn python=3.8
 conda activate diffgraspsyn
-pip install torch --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 pip install -r requirements.txt
 
