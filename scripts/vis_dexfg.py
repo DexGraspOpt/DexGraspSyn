@@ -10,20 +10,24 @@ sys.path.append('../')
 
 from hand_layers.allegro_hand_layer.allegro_layer import AllegroHandLayer
 from hand_layers.shadow_hand_layer.shadow_layer import ShadowHandLayer
+from hand_layers.svh_kinematics.svh_layer import SvhHandLayer
+
 
 
 category = 'spray_bottle'
 intention = 'TU'
-hand_name = 'allegro_hand'  # 'shadow_hand'
+hand_name = 'shadow_hand'  # ['shadow_hand', 'allegro_hand', 'svh_hand']
 if hand_name == 'allegro_hand':
     hand_layer = AllegroHandLayer(to_mano_frame=True, show_mesh=True, device='cpu')
 elif hand_name == 'shadow_hand':
     hand_layer = ShadowHandLayer(to_mano_frame=True, show_mesh=True, device='cpu')
+elif hand_name == 'svh_hand':
+    hand_layer = SvhHandLayer(to_mano_frame=True, show_mesh=True).to('cpu')
 else:
-    # Only above two hands are supported now, more hand will be added soon (schunk hand and HIT DLR II hand)
+    # Only above three hands are supported now (BarrettHand and HIT DLR II hand are not supported now)
     raise ValueError(f'hand_name {hand_name} not recognized')
 
-DEXFG_DATA_DIR = '/home/v-wewei/data/dexfg_grasp_dataset/'  # PATH to the dexfg dataset
+DEXFG_DATA_DIR = '/home/v-wewei/data/dexfg_grasp_dataset_new/'  # PATH to the dexfg dataset
 Grasp_DIR = os.path.join(DEXFG_DATA_DIR, category, intention, hand_name)
 
 files = glob.glob(Grasp_DIR+'/*.npy')

@@ -17,10 +17,10 @@ if __name__ == "__main__":
     CUR_DIR = os.path.dirname(os.path.abspath(__file__))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    hand_name = 'shadow_hand'
+    hand_name = 'leap_hand'
 
-    opt_args = edict({'batch_size_each': 10, 'distance_lower': 0.05, 'distance_upper': 0.1,
-                      'jitter_strength': 0.1, "theta_lower": -np.pi / 6, 'theta_upper': np.pi / 6})
+    opt_args = edict({'batch_size_each': 100, 'distance_lower': 0.05, 'distance_upper': 0.1,
+                      'jitter_strength': 0.02, "theta_lower": -np.pi/6, 'theta_upper': np.pi/6})
 
     mesh_dir = './test_data/meshes/'
     filepath_list = glob.glob('{}/*.obj'.format(mesh_dir))
@@ -29,6 +29,8 @@ if __name__ == "__main__":
 
         object_params = get_object_params(obj_filepath)
         obj_name = obj_filepath.split('/')[-1].split('.')[0]
+        if not obj_name == 'tmpfvthwtwg':
+            continue
 
         hand_opt = HandOptimizer(device=device, hand_name=hand_name, hand_params={}, object_params=object_params,
                                  apply_fc=False, args=opt_args)
@@ -36,8 +38,8 @@ if __name__ == "__main__":
 
         grasp = hand_opt.best_grasp_configuration(save_real=False)
         # grasp = hand_opt.last_grasp_configuration(save_real=False)
-        # grasp_real = hand_opt.best_grasp_configuration(save_real=True)
-        # np.save(obj_name + '.npy', grasp_real)
+        grasp_real = hand_opt.best_grasp_configuration(save_real=True)
+        np.save('./test_data/grasp_npy/{}.npy'.format(obj_name), grasp_real)
         vis_grasp = True
         if vis_grasp:
             # init grasp
@@ -59,6 +61,8 @@ if __name__ == "__main__":
             anchors = hand_opt.hand_anchor_layer.forward(verts)
 
             for idx in range(opt_args.batch_size_each):
+                # if not (idx == 55):
+                #     continue
                 pc = trimesh.PointCloud(verts[idx].squeeze().cpu().numpy(), colors=(0, 255, 255))
                 pc_anchor = trimesh.PointCloud(anchors[idx].squeeze().cpu().numpy(), colors=(255, 0, 0))
                 pc_init = trimesh.PointCloud(verts_init[idx].squeeze().cpu().numpy(), colors=(255, 0, 255))

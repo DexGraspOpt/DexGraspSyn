@@ -38,7 +38,7 @@ class IsaacValidator():
         self.hand_rigid_body_sets = []
         self.obj_rigid_body_sets = []
         if joint_names is None:
-            self.joint_names = ['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15']
+            self.joint_names = ['1','0','2','3','5','4','6','7','9','8','10','11','12','13','14','15']
         else:
             self.joint_names = joint_names
 

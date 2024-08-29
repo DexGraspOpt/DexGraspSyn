@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 import numpy as np
 import trimesh
+import time
 import roma
 from tqdm import tqdm
 import sys
@@ -305,7 +306,7 @@ class HandOptimizer(nn.Module):
             return self.joints_mean + self.joints_range * torch.tanh(self.theta)
 
     def compute_self_collision(self, pred):
-        finger_verts, finger_verts_normal, splits = self.get_hand_verts_and_normal(pred, down_sample_rate=1)
+        finger_verts, finger_verts_normal, splits = self.get_hand_verts_and_normal(pred, down_sample_rate=2)
         self_collision_loss = None
 
         for i in range(1, len(splits)-2):
@@ -313,8 +314,8 @@ class HandOptimizer(nn.Module):
                                                               finger_verts[:, splits[i+1]:],
                                                               finger_verts_normal[:, splits[i]:splits[i+1]],
                                                               finger_verts_normal[:, splits[i+1]:])
-            j2i_signed_dist_neg = torch.logical_and(j2i_signed.abs() < 0.02, j2i_signed < 0.0)
-            i2j_signed_dist_neg = torch.logical_and(i2j_signed.abs() < 0.02, i2j_signed < 0.0)
+            j2i_signed_dist_neg = torch.logical_and(j2i_signed.abs() < 0.01, j2i_signed < 0.0)
+            i2j_signed_dist_neg = torch.logical_and(i2j_signed.abs() < 0.01, i2j_signed < 0.0)
 
             if self_collision_loss is None:
                 self_collision_loss = torch.sum(i2j_signed * i2j_signed_dist_neg, dim=1)
@@ -367,13 +368,14 @@ class HandOptimizer(nn.Module):
 
         loss_collision_obstacle = 0
         if obstacle is not None:
-            _, h2o_signed, _, _ = point2point_signed(
+            _, h2o_signed, _, _, _, _ = point2point_signed(
                 pred['vertices'], obstacle['points'].repeat(self.bs, 1, 1), pred['normals'],
                 obstacle['normals'].repeat(self.bs, 1, 1))
 
             h2o_dist_neg = torch.logical_and(h2o_signed.abs() < 0.05, h2o_signed < 0.0)
             loss_collision_obstacle = torch.sum(h2o_signed * h2o_dist_neg, dim=1) * -20
-
+        # torch.cuda.synchronize()
+        # time_start = time.time()
         # hand object collision
         o2h_signed, h2o_signed, _, obj_near_idx, o2h_vec, h2o_vec = point2point_signed(
             pred['vertices'], self.object_params['points'].repeat(self.bs, 1, 1),
@@ -381,13 +383,16 @@ class HandOptimizer(nn.Module):
         )
 
         o2h_dist_neg = torch.logical_and(o2h_signed.abs() < 0.005, o2h_signed < 0.0)
-        h2o_dist_neg = torch.logical_and(h2o_signed.abs() < 0.02, h2o_signed < 0.0)
+        # h2o_dist_neg = torch.logical_and(h2o_signed.abs() < 0.02, h2o_signed < 0.0)
 
-        loss_collision_h2o = torch.sum(h2o_signed * h2o_dist_neg, dim=1)
+        # loss_collision_h2o = torch.sum(h2o_signed * h2o_dist_neg, dim=1)
         loss_collision_o2h = torch.sum(o2h_signed * o2h_dist_neg, dim=1)
 
-        hand_obj_collision = -20 * (1*loss_collision_h2o + 10 * loss_collision_o2h)  # 75
-
+        # hand_obj_collision = -20 * (1*loss_collision_h2o + 10 * loss_collision_o2h)  # 75
+        hand_obj_collision = -200 * loss_collision_o2h  # 75
+        # torch.cuda.synchronize()
+        # time_cost = time.time() - time_start
+        # print('time cost', time_cost)
         # hand self collision
         if self.hand_name == 'parallel_hand':  # there is no self collision with parallel jaw gripper
             hand_self_collision = 0

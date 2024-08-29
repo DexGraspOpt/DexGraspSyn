@@ -11,7 +11,7 @@ def point2point_signed(
         y,
         x_normals=None,
         y_normals=None,
-        use_cosine_collision=False
+        use_cosine_collision=[False, False],
 ):
     """
     signed distance between two pointclouds
@@ -32,6 +32,11 @@ def point2point_signed(
         - yidx_near: Torch.tensor
             the indices of x vertices closest to y
     """
+    if use_cosine_collision == True:
+        use_cosine_collision = [True, True]
+    elif use_cosine_collision == False:
+        use_cosine_collision = [False, False]
+
 
     N, P1, D = x.shape
     P2 = y.shape[1]
@@ -54,7 +59,7 @@ def point2point_signed(
 
     if x_normals is not None:
         y_nn = x_normals.gather(1, yidx_near_expanded)
-        if use_cosine_collision:
+        if use_cosine_collision[0]:
             y2x_signed = torch.bmm(y_nn.view(-1, 1, 3), y2x.view(-1, 3, 1)).view(N, -1)
         else:
             in_out = torch.bmm(y_nn.view(-1, 1, 3), y2x.view(-1, 3, 1)).view(N, -1).sign()
@@ -64,7 +69,7 @@ def point2point_signed(
 
     if y_normals is not None:
         x_nn = y_normals.gather(1, xidx_near_expanded)
-        if use_cosine_collision:
+        if use_cosine_collision[1]:
             x2y_signed = torch.bmm(x_nn.view(-1, 1, 3), x2y.view(-1, 3, 1)).view(N, -1)
         else:
             in_out_x = torch.bmm(x_nn.view(-1, 1, 3), x2y.view(-1, 3, 1)).view(N, -1).sign()

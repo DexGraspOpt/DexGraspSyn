@@ -20,17 +20,18 @@ from xml_processing.write_obj_xml import write_convex_obj_file
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # device = 'cpu'
-obj = pv.MeshObjectFactory("../test_data/meshes/tmph0h9jpn1_simplified.obj")
+obj = pv.MeshObjectFactory("../test_data/meshes/tmph0h9jpn1.obj")
 sdf = pv.MeshSDF(obj)
 # caching the SDF via a voxel grid to accelerate queries
-cached_sdf = pv.CachedSDF('drill', resolution=0.001, range_per_dim=obj.bounding_box(padding=0.1), gt_sdf=sdf, device=device)
+cached_sdf = pv.CachedSDF('drill', resolution=0.001, range_per_dim=obj.bounding_box(padding=0.1), gt_sdf=sdf,
+                          cache_path="drill_sdf_cache.pkl", device=device)
 
 
 # get points in a grid in the object frame
 query_range = np.array([
-    [-0.2, 0.2],
-    [-0.2, 0.2],
-    [-0.2, 0.2],
+    [-0.1, 0.1],
+    [-0.1, 0.1],
+    [-0.1, 0.1],
 ])
 
 import time
