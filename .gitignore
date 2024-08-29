@@ -163,3 +163,6 @@ cython_debug/
 
 third_party/*
 hand_layers/*
+test_data/xmls/*
+test_data/grasp_npy/*
+scripts_local/*
