@@ -36,6 +36,7 @@ def initialize_grasp_space(hand_model, object_mesh_list, args):
 
     device = hand_model.device
     n_objects = len(object_mesh_list)
+    print(n_objects)
     batch_size_each = args.batch_size_each
     total_batch_size = n_objects * batch_size_each
 
@@ -43,7 +44,7 @@ def initialize_grasp_space(hand_model, object_mesh_list, args):
 
     translation = torch.zeros([total_batch_size, 3], dtype=torch.float, device=device)
     rotation = torch.zeros([total_batch_size, 3, 3], dtype=torch.float, device=device)
-    print('n_objects', n_objects)
+    # print('n_objects', n_objects)
     for i in range(n_objects):
         # get inflated convex hull
         object_mesh_list[i].remove_degenerate_faces()
@@ -117,6 +118,7 @@ def initialize_grasp_space(hand_model, object_mesh_list, args):
         rotation_local = torch.zeros([batch_size_each, 3, 3], dtype=torch.float, device=device)
         rotation_global = torch.zeros([batch_size_each, 3, 3], dtype=torch.float, device=device)
         radius = 0.05
+        random_sign = np.random.choice([-1, 1])
         for j in range(batch_size_each):
             rotation_local[j] = torch.tensor(
                 transforms3d.euler.euler2mat(process_theta[j], deviate_theta[j], 0, axes='sxyz'),
@@ -144,31 +146,30 @@ def initialize_grasp_space(hand_model, object_mesh_list, args):
         rotation_global[mask, :3, 0] *= -1
         rotation_global[mask, :3, 2] *= -1
 
-        translation[i * batch_size_each: (i + 1) * batch_size_each] = p - distance.unsqueeze(1) * (
-                    rotation_global @ rotation_local @ torch.tensor([0, 0, 1], dtype=torch.float,
-                                                                    device=device).reshape(1, -1, 1)).squeeze(2)
-        rotation_hand = torch.tensor(transforms3d.euler.euler2mat(0, -np.pi/2, -np.pi/6, axes='szxz'), dtype=torch.float,
-                                     device=device)
+        if random_sign == 1:
+            rotation_hand = torch.tensor(transforms3d.euler.euler2mat(0, -np.pi/2,  np.deg2rad(60), axes='szxz'),
+                                         dtype=torch.float, device=device)
+        else:
+            rotation_hand = torch.tensor(transforms3d.euler.euler2mat(0, -np.pi/2, -np.deg2rad(120), axes='szxz'),
+                                         dtype=torch.float, device=device)
+
         rotation[i * batch_size_each: (i + 1) * batch_size_each] = rotation_global @ rotation_local @ rotation_hand
+        translation[i * batch_size_each: (i + 1) * batch_size_each] = p - distance.unsqueeze(1) * (
+                rotation_global @ rotation_local @ torch.tensor([0, 0, 1], dtype=torch.float,
+                                                                device=device).reshape(1, -1, 1)).squeeze(2) - (
+                rotation_global @ rotation_hand @ torch.tensor([0.02, 0.00, 0], dtype=torch.float,
+                                                                device=device).reshape(1, -1, 1)).squeeze(2)
 
     # initialize joint angles
     # joint_angles_mu: hand-crafted canonicalized hand articulation
     # use truncated normal distribution to jitter the joint angles
+    joint_angles_mu = hand_model.get_init_angle()
 
-    # joint_angles_mu = torch.tensor(
-    #     [0.1, 0, 0.6, 0, 0, 0, 0.6, 0, -0.1, 0, 0.6, 0, 0, -0.2, 0, 0.6, 0, 0, 1.2, 0, -0.2, 0], dtype=torch.float,
-    #     device=device)
-    joint_angles_mu = (hand_model.joints_upper - hand_model.joints_lower) / 6.0 + hand_model.joints_lower
-    joint_angles_mu[1] = -0.1
-    joint_angles_mu[5] = 0.0
-    joint_angles_mu[9] = 0.1
-    joint_angles_mu[12] = 0.8
-    # joint_angles_mu[13] = 0.7
     joint_angles_sigma = args.jitter_strength * (hand_model.joints_upper - hand_model.joints_lower)
     joint_angles = torch.zeros([total_batch_size, hand_model.n_dofs], dtype=torch.float, device=device)
     for i in range(hand_model.n_dofs):
         torch.nn.init.trunc_normal_(joint_angles[:, i], joint_angles_mu[i], joint_angles_sigma[i],
-                                    hand_model.joints_lower[i] - 1e-6, hand_model.joints_upper[i] + 1e-6)
+                                    hand_model.joints_lower[i] + 1e-6, hand_model.joints_upper[i] - 1e-6)
     # joint_angles[:, [1, 5, 9]] = 0
 
     hand_params = {'joint_angles': joint_angles, 'wrist_tsl': translation,
@@ -224,7 +225,7 @@ if __name__ == "__main__":
     show_mesh = False
     make_contact_points = False
 
-    allegro = LeapHandLayer(show_mesh=show_mesh, make_contact_points=make_contact_points, to_mano_frame=True, device=device)
+    allegro = LeapHandLayer(show_mesh=show_mesh,  to_mano_frame=True, device=device)
 
 
     hand_params = initialize_grasp_space(allegro, object_mesh_list, args)

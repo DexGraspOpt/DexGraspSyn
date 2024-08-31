@@ -19,6 +19,7 @@ from hand_layers.svh_hand_layer.svh_layer import SvhHandLayer, SvhAnchor
 from hand_layers.mano_hand_layer.mano_layer import ManoHandLayer, ManoAnchor
 
 from utils.initializations import initialize_grasp_space
+# from utils.initializations_ours import initialize_grasp_space
 from utils.loss_utils import point2point_signed
 from utils.rot6d import robust_compute_rotation_matrix_from_ortho6d
 # roma quat [x, y, z, w]

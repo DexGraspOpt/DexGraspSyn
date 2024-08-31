@@ -19,8 +19,8 @@ if __name__ == "__main__":
 
     hand_name = 'leap_hand'
 
-    opt_args = edict({'batch_size_each': 100, 'distance_lower': 0.05, 'distance_upper': 0.1,
-                      'jitter_strength': 0.02, "theta_lower": -np.pi/6, 'theta_upper': np.pi/6})
+    opt_args = edict({'batch_size_each': 10, 'distance_lower': 0.05, 'distance_upper': 0.15,
+                      'jitter_strength': 0.1, "theta_lower": -np.pi/6, 'theta_upper': np.pi/6})
 
     mesh_dir = './test_data/meshes/'
     filepath_list = glob.glob('{}/*.obj'.format(mesh_dir))
@@ -29,8 +29,8 @@ if __name__ == "__main__":
 
         object_params = get_object_params(obj_filepath)
         obj_name = obj_filepath.split('/')[-1].split('.')[0]
-        if not obj_name == 'tmpfvthwtwg':
-            continue
+        # if not obj_name == 'tmpfvthwtwg':
+        #     continue
 
         hand_opt = HandOptimizer(device=device, hand_name=hand_name, hand_params={}, object_params=object_params,
                                  apply_fc=False, args=opt_args)
