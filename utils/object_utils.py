@@ -1,3 +1,4 @@
+import os
 import trimesh
 import numpy as np
 import point_cloud_utils as pcu
@@ -31,6 +32,13 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
 
     # scale the object mesh
     mesh.vertices *= scale
+
+    # normalize to the center
+    bbmin = mesh.vertices.min(0)
+    bbmax = mesh.vertices.max(0)
+    center = (bbmin + bbmax) * 0.5
+    mesh.vertices -= center  # center
+
     if watertight_process:
         if mesh.is_watertight:
             pass
@@ -38,7 +46,8 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
             pitch = mesh.extents.max() / 128  # size
             if pitch < 0.002:
                 pitch = 0.002
-            vox = mesh.voxelized(pitch)
+            # change it to binvox method for better and speed up
+            vox = mesh.voxelized(pitch, 'binvox', **{'binvox_path': '{}/code/binvox'.format(os.environ['HOME'])})
             vox.fill()
             bounds = vox.bounds
 
@@ -115,6 +124,9 @@ def create_plane_points_with_normal(lx, ly, grid_size):
 
 
 if __name__ == '__main__':
-    plane_points = create_plane_points_with_normal(0.15, 0.15, 0.01)
-    pc = trimesh.PointCloud(plane_points[:, :3], colors=(0, 255, 255))
-    pc.show()
+    # plane_points = create_plane_points_with_normal(0.15, 0.15, 0.01)
+    # pc = trimesh.PointCloud(plane_points[:, :3], colors=(0, 255, 255))
+    # pc.show()
+
+    get_object_params(mesh_filepath='/media/v-wewei/T01/objaverse/hf-objaverse-v1/glbs/000-121/a9e49d03467c47a0bf39931a2a8ac6aa.glb',
+                      scale=0.003811418377331815)
