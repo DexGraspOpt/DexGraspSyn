@@ -1,4 +1,5 @@
 import os
+os.environ['PATH'] = os.environ['HOME']+'/code:' + os.environ['PATH']
 import trimesh
 import numpy as np
 import point_cloud_utils as pcu
@@ -38,7 +39,7 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
     bbmax = mesh.vertices.max(0)
     center = (bbmin + bbmax) * 0.5
     mesh.vertices -= center  # center
-
+    mesh_orin = mesh.copy()
     if watertight_process:
         if mesh.is_watertight:
             pass
@@ -46,15 +47,25 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
             pitch = mesh.extents.max() / 128  # size
             if pitch < 0.002:
                 pitch = 0.002
-            # change it to binvox method for better and speed up
-            vox = mesh.voxelized(pitch, 'binvox', **{'binvox_path': '{}/code/binvox'.format(os.environ['HOME'])})
+            use_binvox = False
+            if mesh.faces.shape[0] > 100:
+                use_binvox = True
+                # change it to binvox method for better and speed up
+                vox = mesh.voxelized(pitch, 'binvox')
+            else:
+                vox = mesh.voxelized(pitch)
             vox.fill()
             bounds = vox.bounds
 
             mesh = vox.marching_cubes
-            mesh.vertices -= mesh.bounds[0]
+            if use_binvox:
+                mesh.vertices -= (mesh.bounds[0]-0)  # 0.5
+            else:
+                mesh.vertices -= mesh.bounds[0]
             mesh.vertices *= pitch
             mesh.vertices += bounds[0]
+            # vw, fw = pcu.make_mesh_watertight(mesh.vertices, mesh.faces, resolution=50000)
+            # mesh = trimesh.Trimesh(vertices=vw, faces=fw)
 
     # points, face_index = trimesh.sample.sample_surface(mesh, 50000)
     # normals = mesh.face_normals[face_index]
@@ -84,6 +95,15 @@ def get_object_params(mesh_filepath, vox_size=0.006, scale=1.0, vis=False, water
         o3d_mesh = mesh.as_open3d
         o3d_mesh.compute_vertex_normals()
         o3d.visualization.draw_geometries([o3d_pc, o3d_mesh])
+
+    write_ply = True
+    if write_ply:
+        import open3d as o3d
+        pc = o3d.geometry.PointCloud()
+        pc.points = o3d.utility.Vector3dVector(v_sampled)
+        CUR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        o3d.io.write_point_cloud('{}/test_data/ply/{}.ply'.format(CUR_DIR, mesh_filepath.split('/')[-1].split('.')[0]), pc)
 
     object_params = {'points': v_sampled,
                      'normals': n_sampled,
@@ -127,6 +147,20 @@ if __name__ == '__main__':
     # plane_points = create_plane_points_with_normal(0.15, 0.15, 0.01)
     # pc = trimesh.PointCloud(plane_points[:, :3], colors=(0, 255, 255))
     # pc.show()
+    import objaverse
+    objects = objaverse.load_objects(uids=['917f8aaadff04833a8601caaa2b76d95'])
+    for uid, obj_filepath in objects.items():
+        get_object_params(
+            mesh_filepath=obj_filepath,
+            scale=0.05851385052149179)
+        # obj_mesh = trimesh.load(obj_filepath, force='mesh')
+        # face_count = obj_mesh.faces.shape[0]
+        # print(face_count)
+
+        # obj_mesh.apply_scale(0.05851385052149179)
+        # obj_mesh.show()
+        # exit()
+
 
     get_object_params(mesh_filepath='/media/v-wewei/T01/objaverse/hf-objaverse-v1/glbs/000-121/a9e49d03467c47a0bf39931a2a8ac6aa.glb',
                       scale=0.003811418377331815)

@@ -6,7 +6,7 @@ import trimesh
 from easydict import EasyDict as edict
 import glob
 
-from graspsyn.hand_optimizer import HandOptimizer
+from graspsyn.ibs_optimizer import HandOptimizer
 from utils.object_utils import get_object_params
 from utils.rot6d import robust_compute_rotation_matrix_from_ortho6d
 from utils.seed_utils import set_seed
@@ -18,12 +18,17 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     hand_name = 'leap_hand'
-
-    opt_args = edict({'batch_size_each': 10, 'distance_lower': 0.05, 'distance_upper': 0.15,
+    bs = 1
+    opt_args = edict({'batch_size_each': bs, 'distance_lower': 0.15, 'distance_upper': 0.25,
                       'jitter_strength': 0.1, "theta_lower": -np.pi/6, 'theta_upper': np.pi/6})
 
     mesh_dir = './test_data/meshes/'
     filepath_list = glob.glob('{}/*.obj'.format(mesh_dir))
+
+
+    retargeting_params = {'joint_angles': torch.zeros((1, 16)).to(device), 'wrist_tsl': torch.tensor([[0, 0, 0.15]]).to(device),
+                           'wrist_rot6d': roma.rotvec_to_rotmat(torch.tensor([np.pi/2, -np.pi/4, np.pi*0])).reshape(1, 3, 3).transpose(1, 2)[:, :2].reshape(-1, 6).to(device),
+                          }
 
     for obj_filepath in filepath_list:
 
@@ -32,9 +37,10 @@ if __name__ == "__main__":
         # if not obj_name == 'tmpfvthwtwg':
         #     continue
 
-        hand_opt = HandOptimizer(device=device, hand_name=hand_name, hand_params={}, object_params=object_params,
+        hand_opt = HandOptimizer(device=device, hand_name=hand_name, hand_params=retargeting_params, object_params=object_params,
                                  apply_fc=False, args=opt_args)
-        hand_opt.optimize(obstacle=None, n_iters=200)
+        hand_opt.optimize(obstacle=None, n_iters=500)
+
 
         grasp = hand_opt.best_grasp_configuration(save_real=False)
         # grasp = hand_opt.last_grasp_configuration(save_real=False)

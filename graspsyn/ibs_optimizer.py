@@ -4,11 +4,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
+import pytorch3d.ops
 import numpy as np
 import trimesh
 import time
 import roma
 from tqdm import tqdm
+import pytorch_volumetric as pv
 import sys
 sys.path.append('../')
 
@@ -20,7 +22,7 @@ from hand_layers.mano_hand_layer.mano_layer import ManoHandLayer, ManoAnchor
 
 from utils.initializations import initialize_grasp_space
 # from utils.initializations_ours import initialize_grasp_space
-from utils.loss_utils import point2point_signed
+from utils.loss_utils import point2point_signed, point2point_nosigned
 from utils.rot6d import robust_compute_rotation_matrix_from_ortho6d
 # roma quat [x, y, z, w]
 
@@ -52,10 +54,8 @@ class HandOptimizer(nn.Module):
         self.bs = hand_params['joint_angles'].shape[0]
         self._init_hand(hand_params)
 
-        if hand_params['parallel_contact_point'] is not None:
-            self.parallel_contact_points = hand_params['parallel_contact_point']
-        else:
-            self.parallel_contact_points = None
+
+        self._init_mano_hand()
         
         self.best_wrist_rot = self.init_wrist_rot.clone()
         self.best_wrist_tsl = self.init_wrist_tsl.clone()
@@ -68,8 +68,10 @@ class HandOptimizer(nn.Module):
             self.pose[:, :3, :3] = robust_compute_rotation_matrix_from_ortho6d(self.init_wrist_rot)
         self.pose[:, :3, 3] = self.init_wrist_tsl
 
-    def _init_hand_layer(self, to_mano_frame=True):
+    def _init_mano_hand(self):
+        self.mano_hand = ManoHandLayer(device=self.device)
 
+    def _init_hand_layer(self, to_mano_frame=True):
         if self.hand_name == 'leap_hand':
             self.hand_layer = LeapHandLayer(to_mano_frame=to_mano_frame, device=self.device)
             self.hand_anchor_layer = LeapAnchor()
@@ -90,49 +92,22 @@ class HandOptimizer(nn.Module):
             assert NotImplementedError
 
     def _init_hand(self, hand_params):
-        if self.hand_name == 'leap_hand':
-            self.joints_mean = self.hand_layer.joints_mean
-            self.joints_range = self.hand_layer.joints_range
 
+        if self.hand_name == 'leap_hand' or self.finger_num == 'allegro_hand':
             self.finger_num = 4
-
-            self.finger_indices = self.hand_layer.hand_finger_indices
-            # self.finger_indices = []
-            # for key, value in finger_indices.items():
-            #     self.finger_indices.append(value[1].item())
-        elif self.hand_name == 'allegro_hand':
-            self.joints_mean = self.hand_layer.joints_mean
-            self.joints_range = self.hand_layer.joints_range
-
-            self.finger_num = 4
-
-            self.finger_indices = self.hand_layer.hand_finger_indices
-            # self.finger_indices = []
-            # for key, value in finger_indices.items():
-            #     self.finger_indices.append(value[1].item())
-        elif self.hand_name == 'shadow_hand' or self.hand_name == 'svh_hand':
-            self.joints_mean = self.hand_layer.joints_mean
-            self.joints_range = self.hand_layer.joints_range
-
+        elif self.hand_name == 'shadow_hand' or self.hand_name == 'svh_hand' or self.hand_name == 'mano_hand':
             self.finger_num = 5
-
-            self.finger_indices = self.hand_layer.hand_finger_indices
-            # self.finger_indices = []
-            # for key, value in finger_indices.items():
-            #     self.finger_indices.append(value[1])
-        elif self.hand_name == 'mano_hand':
-            self.joints_mean = self.hand_layer.joints_mean
-            self.joints_range = self.hand_layer.joints_range
-
-            self.finger_num = 5
-
-            self.finger_indices = self.hand_layer.hand_finger_indices
-            # self.finger_indices = []
-            # for key, value in finger_indices.items():
-            #     self.finger_indices.append(value[1])
         else:
             # custom hand layer should be specified here
             raise NotImplementedError
+        if self.hand_name == 'leap_hand':
+            self.remap_finger_name = {'palm': 'palm_lower', 'thumb': 'thumb_fingertip', 'index': 'fingertip', 'middle': 'fingertip_2',
+                          'ring': 'fingertip_3'}
+            self.inv_remap_finger_name = {v: k for k, v in self.remap_finger_name.items()}
+
+        self.joints_mean = self.hand_layer.joints_mean
+        self.joints_range = self.hand_layer.joints_range
+        self.finger_indices = self.hand_layer.hand_finger_indices
 
         self.joints_range = self.joints_range.to(self.device)
         self.joints_mean = self.joints_mean.to(self.device)
@@ -170,12 +145,12 @@ class HandOptimizer(nn.Module):
 
         # initialize the optimizer
         self.optimizer = torch.optim.AdamW([
-            {'params': self.wrist_rot, 'lr': 0.006},
-            {'params': self.wrist_tsl, 'lr': 0.002},
-            {'params': self.theta, 'lr': 0.03},
+            {'params': self.wrist_rot, 'lr': 0.005},
+            {'params': self.wrist_tsl, 'lr': 0.005},
+            {'params': self.theta, 'lr': 0.01},
         ], lr=0.01)  # used by allegro
 
-        self.scheduler = StepLR(self.optimizer, step_size=50, gamma=0.9)
+        self.scheduler = StepLR(self.optimizer, step_size=150, gamma=0.9)
 
         self.theta_decode = None
         self.finger_id = None  # fore_finger
@@ -256,7 +231,6 @@ class HandOptimizer(nn.Module):
             0.5, 0,  # little
         ]).to(self.device)[valid_mask]
 
-
         # self.contact_weight = torch.ones(len(self.contact_idx)).to(self.device)
 
         self.fc_transformation_matrix = torch.tensor([
@@ -286,6 +260,33 @@ class HandOptimizer(nn.Module):
         finger_verts_normal = torch.cat(finger_verts_normal, dim=1)
 
         return finger_verts, finger_verts_normal, split_indices
+
+    def get_hand_verts_and_normal_v1(self, pred):
+        finger_verts = {}
+        finger_verts_normal = {}
+        if self.finger_num == 4:
+            finger_names = ['palm', 'thumb', 'index', 'middle', 'ring']
+        elif self.finger_num == 5:
+            finger_names = ['palm', 'thumb', 'index', 'middle', 'ring', 'little']
+
+        for (key, value), name in zip(self.finger_indices.items(), finger_names):
+            finger_verts[name] = pred['vertices'][:, value]
+            finger_verts_normal[name] = pred['normals'][:, value]
+
+        return finger_verts, finger_verts_normal
+
+    def remove_little_finger(self, pred):
+        finger_verts = []
+        finger_verts_normal = []
+
+        for key, value in self.finger_indices.items():
+            finger_verts.append(pred['vertices'][:, value])
+            finger_verts_normal.append(pred['normals'][:, value])
+
+        finger_verts = torch.cat(finger_verts, dim=1)
+        finger_verts_normal = torch.cat(finger_verts_normal, dim=1)
+
+        return finger_verts, finger_verts_normal
 
     def compute_grasp_matrix(self, contact_points, contact_normals):
         batch_size, n_contacts, _ = contact_points.shape
@@ -326,25 +327,152 @@ class HandOptimizer(nn.Module):
 
         return self_collision_loss
 
-    def compute_parallel_contact_loss(self, hand_anchors):
-        left_points, right_points = self.parallel_contact_points[:, :3], self.parallel_contact_points[:, 3:]
-        dis_left = torch.linalg.norm(left_points - hand_anchors[:, 9:12].mean(dim=1), dim=1)
-        dis_right = torch.linalg.norm(right_points - hand_anchors[:, 2:5].mean(dim=1), dim=1)
-        dis = dis_left + dis_right
-        return dis * 1000
+    def get_finger_belonging_indices(self, hand_idx_pos, finger_indices):
+        is_belong = (hand_idx_pos.unsqueeze(1) == finger_indices).any(dim=1)
+        return is_belong.nonzero().squeeze(dim=1)
 
-    def compute_close_distance(self, hand_anchors, h2o_signed):
-        condition_0 = h2o_signed[:, self.hand_anchor_layer.vert_idx[2:5]].mean(dim=1) > 0.02
-        thumb_index = torch.linalg.norm(hand_anchors[:, 2:5].mean(dim=1) - hand_anchors[:, 12], dim=1) * condition_0
-        # condition_1 = h2o_signed[:, self.hand_anchor_layer.vert_idx[9:12]].mean(dim=1) > 0.025
-        # index_thumb = torch.linalg.norm(hand_anchors[:, 9:12].mean(dim=1) - hand_anchors[:, 2:5].mean(dim=1), dim=1) * condition_1 * 0
-        # condition_2 = h2o_signed[:, self.hand_anchor_layer.vert_idx[15:18]].mean(dim=1) > 0.025
-        # middle_thumb = torch.linalg.norm(hand_anchors[:, 15:18].mean(dim=1) - hand_anchors[:, 1], dim=1) * condition_2 * 0
+    def compute_ibs_hand(self, hand_vertices, hand_normals, object_points, object_normals, voxel_points,
+                         hand_mesh=None, mano=False, vis=False):
+        time_start = time.time()
+        # print('---------------', hand_vertices.shape)
+        sdf_hand, hand_idx = point2point_nosigned(hand_vertices, voxel_points.repeat(self.bs, 1, 1))
+        sdf_obj, obj_idx = point2point_nosigned(object_points, voxel_points)
 
-        # loss_close = (thumb_index + index_thumb + middle_thumb) * 500
-        loss_close = thumb_index * 500
-        return loss_close
+        # diff = (sdf_hand - sdf_obj).cpu().numpy()
+        # mask_positive = diff >= 0
+        # mask_negative = diff < 0
+        # selected_mask = np.abs(diff) < 0.02
+        #
+        # selected_points = voxel_points.cpu().numpy()[selected_mask]
+        #
+        # selected_points = trimesh.PointCloud(voxel_points.cpu().numpy()[selected_mask], colors=(255, 255, 0))
+        # # pc_positive = trimesh.PointCloud(voxel_points.cpu().numpy()[mask_positive], colors=(0, 255, 255))
+        # # pc_negative = trimesh.PointCloud(voxel_points.cpu().numpy()[mask_negative], colors=(255, 0, 255))
+        # obj_mesh = self.object_params['mesh']
+        # # scene = trimesh.Scene([obj_mesh, pc_negative, pc_positive])
+        # scene = trimesh.Scene([obj_mesh, selected_points])
+        # scene.show()
 
+        diff = (sdf_obj - sdf_hand)
+        positive_mask = torch.logical_and(diff >= 0, diff <= np.sqrt(3)*self.vox_size+1e-4)
+        positive_points = voxel_points[positive_mask].reshape(1, -1, 3)
+        sdf_diff_pos = diff[positive_mask]
+        hand_idx_pos = hand_idx[positive_mask]
+
+        # print(positive_points.shape)
+        negative_mask = torch.logical_and(diff >= -np.sqrt(3)*self.vox_size-1e-4, diff < 0)
+        negative_points = voxel_points[negative_mask].reshape(1, -1, 3)
+        sdf_diff_neg = diff[negative_mask]
+
+        # y2x_signed, x2y_signed, yidx_near, xidx_near, y2x, x2y = point2point_signed(positive_points, negative_points)
+        # mask_pos = x2y_signed < (self.vox_size+1e-4)
+        # positive_points = positive_points[mask_pos]
+        #
+        # mask_neg = y2x_signed < (self.vox_size+1e-4)
+        # negative_points = negative_points[mask_neg]
+
+        dists, idx, knn = pytorch3d.ops.ball_query(positive_points, negative_points, radius=self.vox_size+1e-4, K=6, return_nn=True)
+        valid = dists.sum(dim=-1) > 0
+        positive_points = positive_points[valid]
+        knn = knn[valid]
+        idx = idx[valid]
+        sdf_diff_pos = sdf_diff_pos[valid.squeeze()]
+
+        weighted_sum = True  # use weighted sum get better and smoother IBS visualization
+        if weighted_sum:
+            ret = pytorch3d.ops.utils.masked_gather(sdf_diff_neg.reshape(1, -1, 1), idx.reshape(1, -1, 6)).squeeze(
+                dim=-1)
+            knn_center_sdf = ret.sum(dim=-1).squeeze()  # (N, )
+            knn_center = knn.sum(dim=-2)  # (N, 3)
+
+            idx_mask = idx > -1
+            idx_mask_sum = idx_mask.sum(dim=-1)
+
+            knn_center_sdf = knn_center_sdf / idx_mask_sum
+            knn_center = knn_center / idx_mask_sum[..., None]
+
+            t = -knn_center_sdf / (sdf_diff_pos - knn_center_sdf)
+
+            ibs = knn_center + t.unsqueeze(dim=-1) * (positive_points-knn_center)
+        else:
+            knn_center = knn.sum(dim=-2)
+            idx_mask = idx > -1
+            idx_mask_sum = idx_mask.sum(dim=-1)
+            # average points
+            ibs = (knn_center + positive_points) / (idx_mask_sum[..., None] + 1)
+
+        hand_idx_pos = hand_idx_pos[valid.squeeze()]
+
+        # Identity which finger the ibs belong to
+        if mano:
+            indices = {name: self.get_finger_belonging_indices(hand_idx_pos, indices) for name, indices in
+                       self.mano_hand.hand_finger_indices.items()}
+        else:
+            indices = {name: self.get_finger_belonging_indices(hand_idx_pos, indices) for name, indices in
+                       self.hand_layer.hand_finger_indices.items()}
+
+        # Extracting ibs for each finger
+        ibs_results = {name: ibs[indices] for name, indices in indices.items()}
+
+        time_end = time.time()
+        print('Time to compute knn points: ', time_end - time_start)
+        # print('ibs_results:', ibs_results)
+
+        # dists, idx, knn = pytorch3d.ops.knn_points(negative_points, positive_points, K=3, return_nn=True)
+        # print(idx.shape, knn.shape)
+        # dist_mask = dists < (self.vox_size + 1e-4)
+        # print(dist_mask.shape, knn.shape)
+        # # print(dist_mask.sum())
+        # points = knn[dist_mask]
+        # points = torch.unique(points, dim=0)
+        # print(points.shape)
+
+        # merge ibs of little finger to ring finger for leap hand
+        if self.finger_num == 4 and mano:
+            ibs_results['ring'] = torch.cat([ibs_results['ring'], ibs_results['little']], dim=0)
+            ibs_results.pop('little')
+        elif self.finger_num < 4:
+            raise NotImplementedError('Finger num {} not implemented'.format(self.finger_num))
+
+        if vis:
+            # Define finger colors
+            finger_colors = {
+                'palm': (0, 255, 255),
+                'thumb': (255, 255, 0),
+                'index': (0, 0, 255),
+                'middle': (0, 255, 0),
+                'ring': (255, 0, 255),
+                'little': (255, 0, 0),
+            }
+            pc = []
+            for name, ibs_part in ibs_results.items():
+                if len(ibs_part) == 0:
+                    continue
+                if mano:
+                    pc_finger = trimesh.PointCloud(ibs_part.cpu().detach().numpy(), colors=finger_colors[name])
+                else:
+                    print(name, self.inv_remap_finger_name[name])
+                    pc_finger = trimesh.PointCloud(ibs_part.cpu().detach().numpy(),
+                                                   colors=finger_colors[self.inv_remap_finger_name[name]])
+                pc.append(pc_finger)
+
+            obj_mesh = self.object_params['mesh']
+            if hand_mesh:
+                scene = trimesh.Scene([obj_mesh, hand_mesh, *pc])
+            else:
+                pc_hand = trimesh.PointCloud(hand_vertices[0].cpu().detach().numpy(), colors=(0, 25, 255))
+                scene = trimesh.Scene([obj_mesh, pc_hand, *pc])
+            scene.show()
+
+        return ibs_results
+
+    def compute_ibs_loss(self, ibs_mano, ibs_hand):
+        loss = 0.0
+        for name, value in ibs_mano.items():
+            if len(ibs_hand[self.remap_finger_name[name]]) > 0:
+                dist_forward, dist_backward, _, _, _, _ = point2point_signed(ibs_mano[name].reshape(self.bs, -1, 3), ibs_hand[self.remap_finger_name[name]].reshape(self.bs, -1, 3))
+                loss += (dist_forward.sum() + dist_backward.sum())
+        return loss
 
     def forward(self, iteration=0, obstacle=None, debug=False):
         """
@@ -361,9 +489,6 @@ class HandOptimizer(nn.Module):
         theta = self.decode_theta()
 
         pred_vertices, pred_normals = self.hand_layer.get_forward_vertices(pose, theta)
-        hand_anchors = self.hand_anchor_layer(pred_vertices)
-
-        hand_anchors_normal = self.hand_anchor_layer(pred_normals)
 
         pred = {'vertices': pred_vertices, 'normals': pred_normals}
 
@@ -400,47 +525,19 @@ class HandOptimizer(nn.Module):
         else:
             hand_self_collision = -60 * self.compute_self_collision(pred)  # 60 as default
 
-        # if iteration > 75:
-        #     loss_close = self.compute_close_distance(hand_anchors, h2o_signed)
-        # else:
-        #     loss_close = 0
-
-        obj_near_idx = obj_near_idx[:, self.hand_anchor_layer.vert_idx][:, self.contact_idx]
-        contact_vec = F.normalize(self.object_params['points'].squeeze()[obj_near_idx] - hand_anchors[:, self.contact_idx], dim=-1)
-        contact_obj_vec = -self.object_params['normals'].squeeze()[obj_near_idx]
-
-        out_1 = torch.bmm(hand_anchors_normal[:, self.contact_idx].view(-1, 1, 3),
-                          contact_vec.view(-1, 3, 1)).view(self.bs, -1)
-        out_2 = torch.bmm(hand_anchors_normal[:, self.contact_idx].view(-1, 1, 3),
-                          contact_obj_vec.view(-1, 3, 1)).view(self.bs, -1)
-
-        contact_align_loss = (1 - out_1).sum(-1) * self.contact_align_weight / 2
-        contact_align_loss += (1 - out_2).sum(-1) * self.contact_align_weight / 2
-
-        # E_fc: force Closure ( Note: force closure loss do not play much help in our case !!! not recommend in most case )
-        if self.apply_fc:
-            weights = torch.ones(len(self.contact_idx)).expand(self.bs, -1)
-            select_contact_idx = torch.multinomial(weights, num_samples=self.n_contact, replacement=False).to(self.device)
-            # select_contact_idx = torch.tensor([[2, 3, 4, 9, 10, 11]], dtype=torch.long).repeat(self.bs, 1).to(self.device)
-
-            random_contact_idx = self.contact_idx[select_contact_idx]
-
-            j = random_contact_idx.reshape(self.bs, self.n_contact, 1)
-            selected_anchors = hand_anchors[torch.arange(self.bs).reshape(self.bs, 1, 1), j, torch.arange(3)]
-
-            obj_contact_normal = self.object_params['normals'].squeeze()[obj_near_idx.gather(1, select_contact_idx)]
-
-            contact_normal = obj_contact_normal.reshape(self.bs, 1, 3 * self.n_contact)
-            g = torch.cat([
-                torch.eye(3, dtype=torch.float, device=self.device).expand(self.bs, self.n_contact, 3, 3).reshape(self.bs, 3 * self.n_contact, 3),
-                (selected_anchors @ self.fc_transformation_matrix).view(self.bs, 3 * self.n_contact, 3)
-            ], dim=2).float().to(self.device)
-            norm = torch.norm(contact_normal @ g, dim=[1, 2])
-            E_fc = norm * norm * self.fc_weight
+        if iteration == 499:
+            flag = True
         else:
-            E_fc = 0
-        # mask = (h2o_vec[:, self.hand_anchor_layer.vert_idx][:, self.contact_idx] * hand_anchors_normal[:, self.contact_idx]).sum(dim=-1) < 0
-        E_dis = torch.sum(torch.abs(h2o_signed[:, self.hand_anchor_layer.vert_idx][:, self.contact_idx])*self.contact_weight, dim=1) * self.dis_weight  # * self.config.contact_prob[i]
+            flag = False
+
+        # ibs loss
+        ibs_hand = self.compute_ibs_hand(pred_vertices, pred_normals,
+                                         self.object_params['points'].repeat(self.bs, 1, 1),
+                                         self.object_params['normals'].repeat(self.bs, 1, 1),
+                                         self.voxel_points, vis=flag
+                                         )
+
+        ibs_loss = self.compute_ibs_loss(self.ibs_mano, ibs_hand) * 10
 
         # hand rot loss
         if self.use_quat:
@@ -451,14 +548,8 @@ class HandOptimizer(nn.Module):
         # abnormal joint angle loss  (hand specific loss)
         angle_loss = self.hand_layer.compute_abnormal_joint_loss(theta)
 
-        if self.parallel_contact_points is not None:
-            parallel_contact_loss = self.compute_parallel_contact_loss(hand_anchors)
-        else:
-            parallel_contact_loss = 0.0
-
-        total_cost = (hand_obj_collision + hand_self_collision + E_dis + E_fc + contact_align_loss + hand_rot_loss
-                      + loss_collision_obstacle + angle_loss + parallel_contact_loss)
-
+        total_cost = (hand_obj_collision + hand_self_collision + hand_rot_loss + loss_collision_obstacle + angle_loss + ibs_loss)
+        print(total_cost)
         return total_cost
 
     def inference(self, return_anchors=False):
@@ -548,9 +639,31 @@ class HandOptimizer(nn.Module):
         return grasp_dict
 
     def optimize(self, obstacle=None, n_iters=1000):
+        self.vox_size = 0.01
+
+        query_range = np.array([
+            [-0.3, 0.3],
+            [-0.3, 0.3],
+            [-0.15, 0.15],
+        ])
+        coords, pts = pv.get_coordinates_and_points_in_grid(self.vox_size, query_range, device=self.device)
+
+        theta = torch.rand(self.bs, self.mano_hand.n_dofs).to(self.device)
+        pose = torch.eye(4).reshape(-1, 4, 4).float().to(self.device)
+        pose[:, 2, 3] = 0.12
+        pose[:, :3, :3] = roma.rotvec_to_rotmat(torch.tensor([np.pi/2, -np.pi/4, np.pi*0]))
+        mano_mesh = self.mano_hand.get_forward_hand_mesh(pose, theta)[0]
+        mano_vertices, mano_normals = self.mano_hand.get_forward_vertices(pose, theta)
+        self.voxel_points = pts.reshape(1, -1, 3)
+
+        self.ibs_mano = self.compute_ibs_hand(mano_vertices, mano_normals,
+                                              self.object_params['points'],
+                                              self.object_params['normals'],
+                                              self.voxel_points, hand_mesh=mano_mesh,
+                                              mano=True, vis=True)
+
         min_loss = 1e8
         for iter_step in tqdm(range(n_iters + 1), desc='hand optimize process'):
-
             loss = self.forward(iter_step, obstacle)
 
             if iter_step >= 0:
