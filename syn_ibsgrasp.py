@@ -20,9 +20,7 @@ from dex_retargeting.retargeting_config import RetargetingConfig
 
 
 def get_leap_hand_mesh(joint_angles):
-
     robot = URDF.load('/home/v-wewei/repository/dex-retargeting/assets/robots/hands/leap_hand/leap_hand_v2_right.urdf')
-
     joint_names = []
     for joint in robot.actuated_joints:
         joint_names.append(joint.name)
@@ -134,7 +132,7 @@ if __name__ == "__main__":
         indices = retargeting.optimizer.target_link_human_indices
         joint_pos = mano_out.joints.cpu().numpy().squeeze()
         joint_pos = trimesh.transform_points(joint_pos, lTm)
-        joint_pos -= joint_pos[0]
+        joint_pos -= joint_pos[0]  # center to 0-th hand keypoint
         for _ in range(10):
             if retargeting_type == 'POSE':
                 indices = indices
@@ -163,9 +161,12 @@ if __name__ == "__main__":
     reorder = [order_1.index(item) for item in order_3]
     joint_angles = robot_hand_q[reorder]
 
-    _, link_pose = get_leap_hand_mesh(joint_angles)
+    # _, link_pose = get_leap_hand_mesh(joint_angles)
 
-    wrist_pose = trimesh.transformations.concatenate_matrices(offset_matrix, np.linalg.inv(transform_mano), link_pose['palm_lower'])
+    index = retargeting.optimizer.get_link_indices(['palm_lower'])
+    palm_pose = retargeting.optimizer.robot.get_link_pose(index[0])
+
+    wrist_pose = trimesh.transformations.concatenate_matrices(offset_matrix, np.linalg.inv(transform_mano), palm_pose)
 
     # please note it is hand specific params
     wrist_T_mano = np.linalg.inv(np.array([[-1, 0, 0, 0],
