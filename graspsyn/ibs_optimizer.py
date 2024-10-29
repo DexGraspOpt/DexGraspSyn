@@ -68,8 +68,10 @@ class HandOptimizer(nn.Module):
             self.pose[:, :3, :3] = robust_compute_rotation_matrix_from_ortho6d(self.init_wrist_rot)
         self.pose[:, :3, 3] = self.init_wrist_tsl
 
+        self.vox_size = 0.01
+
     def _init_mano_hand(self):
-        self.mano_hand = ManoHandLayer(device=self.device)
+        self.mano_hand = ManoHandLayer(use_pca=False, device=self.device)
 
     def _init_hand_layer(self, to_mano_frame=True):
         if self.hand_name == 'leap_hand':
@@ -401,6 +403,33 @@ class HandOptimizer(nn.Module):
             # average points
             ibs = (knn_center + positive_points) / (idx_mask_sum[..., None] + 1)
 
+        dists, idx, knn = pytorch3d.ops.knn_points(ibs.view(self.bs, -1, 3), ibs.view(self.bs, -1, 3), K=5, return_nn=True)
+
+        center_points = knn.mean(2).unsqueeze(2)  # Shape (B, N, 1, 3)
+        diff = knn - center_points  # Shape (B, N, k, 3)
+        cov_matrices = torch.matmul(diff.transpose(2, 3), diff)  # Shape (B, N, 3, 3)
+        cov_matrices_reshaped = cov_matrices.view(-1, 3, 3)
+        _, _, vh = torch.svd(cov_matrices_reshaped)
+        normals = vh.view(self.bs, knn.shape[1], 3, 3)[:, :, :, -1]  # Shape (B, N, 3)
+        # compute the sign direction of the normal
+        y2x_signed, _, yidx_near, _, y2x, _ = point2point_signed(hand_vertices, ibs.view(self.bs, -1, 3), hand_normals)
+        mask = (-y2x * normals).sum(-1) < 0 & (y2x_signed > 0)
+        # # this may help to process situation with slightly hand-object collision in GT
+        # mask_b = (-y2x * normals).sum(-1) > 0 & (y2x_signed < 0)
+        normals[mask] *= -1
+        ibs_normals = normals.squeeze()  # hard code for batch size == 1
+
+        # Note: we might need to remove ibs point inside the object but outside the hand
+
+        if vis:
+            origin = ibs.cpu().numpy()
+            origin_pc = trimesh.PointCloud(origin, colors=(255, 0, 255))
+            normal = normals.cpu().numpy().squeeze()
+            ray_visualize = trimesh.load_path(np.hstack((origin,
+                                                         origin + normal * 0.025)).reshape(-1, 2, 3))
+            scene = trimesh.Scene([origin_pc, ray_visualize])
+            scene.show()
+
         hand_idx_pos = hand_idx_pos[valid.squeeze()]
 
         # Identity which finger the ibs belong to
@@ -411,11 +440,12 @@ class HandOptimizer(nn.Module):
             indices = {name: self.get_finger_belonging_indices(hand_idx_pos, indices) for name, indices in
                        self.hand_layer.hand_finger_indices.items()}
 
-        # Extracting ibs for each finger
+        # Extracting ibs for each finger with ibs normal
         ibs_results = {name: ibs[indices] for name, indices in indices.items()}
-
+        ibs_normals_results = {name: ibs_normals[indices] for name, indices in indices.items()}
+        sdf_obj, _ = point2point_nosigned(object_points, ibs.view(self.bs, -1, 3))
         time_end = time.time()
-        print('Time to compute knn points: ', time_end - time_start)
+        # print('Time to compute knn points: ', time_end - time_start)
         # print('ibs_results:', ibs_results)
 
         # dists, idx, knn = pytorch3d.ops.knn_points(negative_points, positive_points, K=3, return_nn=True)
@@ -464,14 +494,18 @@ class HandOptimizer(nn.Module):
                 scene = trimesh.Scene([obj_mesh, pc_hand, *pc])
             scene.show()
 
-        return ibs_results
+        return ibs_results, ibs_normals_results, sdf_obj
 
     def compute_ibs_loss(self, ibs_mano, ibs_hand):
         loss = 0.0
         for name, value in ibs_mano.items():
             if len(ibs_hand[self.remap_finger_name[name]]) > 0:
+                if name == 'thumb':
+                    weight = 200
+                else:
+                    weight = 100
                 dist_forward, dist_backward, _, _, _, _ = point2point_signed(ibs_mano[name].reshape(self.bs, -1, 3), ibs_hand[self.remap_finger_name[name]].reshape(self.bs, -1, 3))
-                loss += (dist_forward.sum() + dist_backward.sum())
+                loss += (dist_forward.sum()/dist_forward.shape[1] + dist_backward.sum()/dist_backward.shape[1]) * weight
         return loss
 
     def forward(self, iteration=0, obstacle=None, debug=False):
@@ -523,7 +557,7 @@ class HandOptimizer(nn.Module):
         if self.hand_name == 'parallel_hand':  # there is no self collision with parallel jaw gripper
             hand_self_collision = 0
         else:
-            hand_self_collision = -60 * self.compute_self_collision(pred)  # 60 as default
+            hand_self_collision = -100 * self.compute_self_collision(pred)  # 60 as default
 
         if iteration == 499:
             flag = True
@@ -539,6 +573,8 @@ class HandOptimizer(nn.Module):
 
         ibs_loss = self.compute_ibs_loss(self.ibs_mano, ibs_hand) * 10
 
+        # fingertip_loss = self.compute_fingertip_loss(mano_fingertip, pred_fingertip)
+
         # hand rot loss
         if self.use_quat:
             hand_rot_loss = (1 - (quat * self.init_wrist_rot).sum(-1) ** 2)
@@ -549,7 +585,6 @@ class HandOptimizer(nn.Module):
         angle_loss = self.hand_layer.compute_abnormal_joint_loss(theta)
 
         total_cost = (hand_obj_collision + hand_self_collision + hand_rot_loss + loss_collision_obstacle + angle_loss + ibs_loss)
-        print(total_cost)
         return total_cost
 
     def inference(self, return_anchors=False):
@@ -638,9 +673,7 @@ class HandOptimizer(nn.Module):
                       }
         return grasp_dict
 
-    def optimize(self, obstacle=None, n_iters=1000):
-        self.vox_size = 0.01
-
+    def optimize(self, obstacle=None, mano_config={}, n_iters=1000):
         query_range = np.array([
             [-0.3, 0.3],
             [-0.3, 0.3],
@@ -648,18 +681,21 @@ class HandOptimizer(nn.Module):
         ])
         coords, pts = pv.get_coordinates_and_points_in_grid(self.vox_size, query_range, device=self.device)
 
-        theta = torch.rand(self.bs, self.mano_hand.n_dofs).to(self.device)
-        pose = torch.eye(4).reshape(-1, 4, 4).float().to(self.device)
-        pose[:, 2, 3] = 0.12
-        pose[:, :3, :3] = roma.rotvec_to_rotmat(torch.tensor([np.pi/2, -np.pi/4, np.pi*0]))
-        mano_mesh = self.mano_hand.get_forward_hand_mesh(pose, theta)[0]
-        mano_vertices, mano_normals = self.mano_hand.get_forward_vertices(pose, theta)
+        # make the center of the pts lie in the center of hand and object
+        mano_config['vertices'] -= torch.from_numpy(self.object_params['offset_center']).to(self.device).float()
+        mano_config['mesh'].vertices -= self.object_params['offset_center']
+        print(mano_config['vertices'].shape)
+        pc = trimesh.PointCloud(mano_config['vertices'].cpu().numpy().squeeze())
+        scene = trimesh.Scene([pc, mano_config['mesh']])
+        scene.show()
+
+
         self.voxel_points = pts.reshape(1, -1, 3)
 
-        self.ibs_mano = self.compute_ibs_hand(mano_vertices, mano_normals,
+        self.ibs_mano = self.compute_ibs_hand(mano_config['vertices'], mano_config['normals'],
                                               self.object_params['points'],
                                               self.object_params['normals'],
-                                              self.voxel_points, hand_mesh=mano_mesh,
+                                              self.voxel_points, hand_mesh=mano_config['mesh'],
                                               mano=True, vis=True)
 
         min_loss = 1e8
@@ -681,13 +717,8 @@ class HandOptimizer(nn.Module):
                             with_limit=False)[nonzero_idx].clone().detach()  # .cpu().squeeze().numpy()
             self.optimizer.zero_grad()
             loss.mean().backward()
-            # if iter_step % 20 == 0:
-            #     self.theta.grad *= 0
-            # else:
-            #     self.wrist_tsl.grad *= 0
-            #     self.wrist_rot.grad *= 0
 
             self.optimizer.step()
             self.scheduler.step()
 
-            # print('{}-th iter: {}'.format(iter_step, loss.mean().item()))
+            print('{}-th iter: {}'.format(iter_step, loss.mean().item()))
